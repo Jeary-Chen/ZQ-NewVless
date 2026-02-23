@@ -481,7 +481,7 @@ export default {
 			}
 		}
 
-		// v2rayN subscription: /sub/{UUID} or /sub?uuid=...
+		// Adaptive subscription: /sub/{UUID} or /sub?uuid=...
 		if (url.pathname.startsWith('/sub')) {
 			const parts = url.pathname.split('/').filter(p => p);
 			const inputUUID = url.searchParams.get('uuid') || parts[1];
@@ -492,13 +492,77 @@ export default {
 			if (inputUUID !== userConfig.uuid) return text('UUID错误，请检查后重新输入', 400);
 			const { workerHost, domains, ports } = getDomainPortLists(req, userConfig);
 			const variants = buildVariants(userConfig.s5, userConfig.proxyIp);
+			
+			// 客户端检测
+			const UA = req.headers.get('User-Agent') || '';
+			const ua = UA.toLowerCase();
+			const isSubConverterRequest = url.searchParams.has('b64') || url.searchParams.has('base64') || req.headers.get('subconverter-request') || req.headers.get('subconverter-version') || ua.includes('subconverter');
+			
+			// 确定订阅类型
+			const 订阅类型 = isSubConverterRequest
+				? 'mixed'
+				: url.searchParams.has('target')
+					? url.searchParams.get('target')
+					: url.searchParams.has('clash') || ua.includes('clash') || ua.includes('meta') || ua.includes('mihomo')
+						? 'clash'
+						: url.searchParams.has('sb') || url.searchParams.has('singbox') || ua.includes('singbox') || ua.includes('sing-box')
+							? 'singbox'
+							: url.searchParams.has('surge') || ua.includes('surge')
+								? 'surge&ver=4'
+								: url.searchParams.has('quanx') || ua.includes('quantumult')
+									? 'quanx'
+									: url.searchParams.has('loon') || ua.includes('loon')
+										? 'loon'
+										: 'mixed';
+			
+			// 生成节点链接
 			const out = [];
 			for (const d of domains) {
 				for (const p of ports) {
 					for (const v of variants) out.push(buildVlessUri(v.raw, userConfig.uuid, `${v.label} ${d}:${p}`, workerHost, d, p, userConfig.s5, userConfig.proxyIp));
 				}
 			}
-			return text(toBase64(out.join('\n')) + '\n');
+			const nodesContent = out.join('\n');
+			
+			// 设置响应头
+			const responseHeaders = {
+				"content-type": "text/plain; charset=utf-8",
+				"Profile-Update-Interval": "3",
+				"Profile-web-page-url": new URL(req.url).origin + '/' + userConfig.uuid,
+				"Cache-Control": "no-store",
+				"Content-Disposition": "attachment; filename=newvless"
+			};
+			
+			// 处理不同类型的订阅
+			if (订阅类型 === 'mixed') {
+				// 标准格式，Base64编码
+				const encoded = toBase64(nodesContent);
+				return new Response(encoded + '\n', { status: 200, headers: responseHeaders });
+			} else {
+				// 订阅转换
+				const 订阅转换URL = `https://SUBAPI.cmliussss.net/sub?target=${订阅类型}&url=${encodeURIComponent(new URL(req.url).origin + '/sub?uuid=' + userConfig.uuid + '&target=mixed')}&emoji=false`;
+				try {
+					const response = await fetch(订阅转换URL, { 
+						headers: { 
+							'User-Agent': 'Subconverter for ' + 订阅类型 
+						}
+					});
+					if (response.ok) {
+						const 转换后内容 = await response.text();
+						// 根据订阅类型设置正确的内容类型
+						if (订阅类型 === 'clash') {
+							responseHeaders["content-type"] = 'application/x-yaml; charset=utf-8';
+						} else if (订阅类型 === 'singbox') {
+							responseHeaders["content-type"] = 'application/json; charset=utf-8';
+						}
+						return new Response(转换后内容, { status: 200, headers: responseHeaders });
+					} else {
+						return text('订阅转换失败: ' + response.statusText, 500);
+					}
+				} catch (error) {
+					return text('订阅转换失败: ' + error.message, 500);
+				}
+			}
 		}
 
 		// UUID input interface at root
