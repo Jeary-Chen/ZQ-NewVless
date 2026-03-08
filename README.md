@@ -1,7 +1,7 @@
 # ZQ-NewVless
 
-![页面](src/3.png)
-![页面](src/4.png)
+![页面](src/优化界面.png)
+![页面](src/管理界面.png)
 
 ## ✨ 功能特点
 
